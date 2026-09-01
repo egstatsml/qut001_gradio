@@ -6,6 +6,16 @@ generated home page linking to all of them.
 
 ## Quick start
 
+Weights for models are tracked with `git lfs`, so will need to clone this repo and 
+also pull weights with
+
+```bash
+git lfs pull
+
+```
+
+To get the docker image up, run
+
 ```bash
 docker compose up --build
 ```
