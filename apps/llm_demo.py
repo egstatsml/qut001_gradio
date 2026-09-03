@@ -125,16 +125,6 @@ def build_probability_chart(tokens, probabilities):
         + "</div>"
     )
 
-def build_step_log_df(step_log):
-    rows = []
-    for entry in step_log:
-        ctx = entry["context_before"]
-        if len(ctx) > 90:
-            ctx = "..." + ctx[-87:]
-        rows.append([entry["choice"], repr(entry["text"]), entry["prob"], ctx])
-    return rows
-
-
 def token_choices_html(tokens=None, probabilities=None, interactive=True):
     """Render true content-width text bubbles, weighted subtly by probability."""
     tokens = tokens or []
@@ -188,8 +178,8 @@ def on_start(prompt, top_k):
             gr.update(visible=False),
             gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True),
             gr.update(value=prompt or "", interactive=True), gr.update(interactive=True),
-            "", "", 0, [], top_k, [],
-            gr.update(value=[]),
+            "", "", 0, top_k, [],
+            build_generated_text_html("", ""),
         )
 
     n_words = word_count(prompt)
@@ -204,8 +194,8 @@ def on_start(prompt, top_k):
             gr.update(visible=False),
             gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True),
             gr.update(value=prompt, interactive=True), gr.update(interactive=True),
-            "", "", 0, [], top_k, [],
-            gr.update(value=[]),
+            "", "", 0, top_k, [],
+            build_generated_text_html("", ""),
         )
 
     tokens, probs = get_predictions(prompt, top_k)
@@ -218,12 +208,12 @@ def on_start(prompt, top_k):
         gr.update(value=f"Choice 1 of {MAX_GENERATION_CHOICES}", visible=True),
         gr.update(interactive=False), gr.update(interactive=True), gr.update(interactive=True),
         gr.update(value=prompt, interactive=False), gr.update(interactive=False),
-        prompt, prompt, 1, [], top_k, tokens,
-        gr.update(value=[]),
+        prompt, prompt, 1, top_k, tokens,
+        build_generated_text_html(prompt, prompt),
     )
 
 
-def on_choose(selection, original_prompt, context, choice_number, step_log, top_k, tokens):
+def on_choose(selection, original_prompt, context, choice_number, top_k, tokens):
     top_k = int(top_k)
     choice_number = int(choice_number)
 
@@ -240,25 +230,12 @@ def on_choose(selection, original_prompt, context, choice_number, step_log, top_
             gr.update(),
             gr.update(), gr.update(), gr.update(),
             gr.update(), gr.update(),
-            original_prompt, context, choice_number, step_log, top_k, tokens,
-            gr.update(value=build_step_log_df(step_log)),
+            original_prompt, context, choice_number, top_k, tokens,
+            gr.update(value=build_generated_text_html(original_prompt, context)),
         )
 
     token_text = tokens[index]
-    current_tokens, current_probs = get_predictions(context, top_k)
-    try:
-        matched_index = current_tokens.index(token_text)
-        prob = current_probs[matched_index]
-    except ValueError:
-        prob = 0.0
-
     new_context = context + token_text
-    new_log = step_log + [{
-        "choice": choice_number,
-        "text": token_text,
-        "prob": f"{prob:.2%}",
-        "context_before": context,
-    }]
 
     if choice_number >= MAX_GENERATION_CHOICES:
         return (
@@ -268,8 +245,8 @@ def on_choose(selection, original_prompt, context, choice_number, step_log, top_
             gr.update(value=f"Done after {MAX_GENERATION_CHOICES} choices", visible=True),
             gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True),
             gr.update(value=new_context, interactive=True), gr.update(interactive=True),
-            original_prompt, new_context, choice_number, new_log, top_k, [],
-            gr.update(value=build_step_log_df(new_log)),
+            original_prompt, new_context, choice_number, top_k, [],
+            gr.update(value=build_generated_text_html(original_prompt, new_context)),
         )
 
     new_tokens, new_probs = get_predictions(new_context, top_k)
@@ -283,8 +260,8 @@ def on_choose(selection, original_prompt, context, choice_number, step_log, top_
         gr.update(value=f"Choice {next_choice} of {MAX_GENERATION_CHOICES}", visible=True),
         gr.update(interactive=False), gr.update(interactive=True), gr.update(interactive=True),
         gr.update(value=new_context, interactive=False), gr.update(interactive=False),
-        original_prompt, new_context, next_choice, new_log, top_k, new_tokens,
-        gr.update(value=build_step_log_df(new_log)),
+        original_prompt, new_context, next_choice, top_k, new_tokens,
+        gr.update(value=build_generated_text_html(original_prompt, new_context)),
     )
 
 
@@ -305,8 +282,8 @@ def on_reset():
         gr.update(visible=False),
         gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True),
         gr.update(value="", interactive=True), gr.update(value=DEFAULT_TOP_K, interactive=True),
-        "", "", 0, [], DEFAULT_TOP_K, [],
-        gr.update(value=[]),
+        "", "", 0, DEFAULT_TOP_K, [],
+        empty_generated_text_html(),
     )
 
 def show_advanced_help(prompt, context):
@@ -327,14 +304,6 @@ def show_advanced_help(prompt, context):
 
 
 def hide_advanced_help():
-    return gr.update(visible=False)
-
-
-def show_history(step_log):
-    return gr.update(visible=True), gr.update(value=build_step_log_df(step_log))
-
-
-def hide_history():
     return gr.update(visible=False)
 
 
@@ -965,38 +934,16 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
                     elem_classes=["selection-bridge"],
                 )
 
-    with gr.Row(elem_classes=["history-control-row"]):
-        history_show_btn = gr.Button(
-            "View generation history",
-            variant="secondary",
-            elem_id="history-show-btn",
-        )
-
-    with gr.Group(visible=False, elem_classes=["history-panel"]) as history_panel:
-        with gr.Row(equal_height=True, elem_classes=["history-heading-row"]):
-            gr.HTML(
-                '<div class="history-heading">'
-                '<b>Generation history</b>'
-                '<span>This updates as you continue choosing text.</span>'
-                '</div>'
-            )
-            history_hide_btn = gr.Button(
-                "Hide history",
-                size="sm",
-                elem_id="history-hide-btn",
-            )
-        step_log_table = gr.Dataframe(
-            headers=["Choice", "Chosen text", "Probability", "Text before choice"],
-            label=None,
-            visible=True,
-            interactive=False,
-            elem_id="step-log-table",
+    with gr.Group(elem_classes=["panel-card", "generated-text-card"]):
+        gr.HTML(generated_text_heading())
+        generated_text_html = gr.HTML(
+            empty_generated_text_html(),
+            elem_id="generated-text-html",
         )
 
     original_prompt_state = gr.State("")
     context_state = gr.State("")
     choice_state = gr.State(0)
-    step_log_state = gr.State([])
     top_k_state = gr.State(DEFAULT_TOP_K)
     token_texts_state = gr.State([])
 
@@ -1052,17 +999,6 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
         outputs=advanced_help_modal,
     )
 
-    history_show_btn.click(
-        fn=show_history,
-        inputs=[step_log_state],
-        outputs=[history_panel, step_log_table],
-    )
-    history_hide_btn.click(
-        fn=hide_history,
-        inputs=None,
-        outputs=history_panel,
-    )
-
     common_outputs = [
         probability_chart,
         token_choice_html,
@@ -1071,8 +1007,8 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
         start_btn, stop_btn, reset_btn,
         prompt_input, top_k_input,
         original_prompt_state, context_state, choice_state,
-        step_log_state, top_k_state, token_texts_state,
-        step_log_table,
+        top_k_state, token_texts_state,
+        generated_text_html,
     ]
 
     start_btn.click(
@@ -1090,7 +1026,7 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
         inputs=[
             selection_bridge,
             original_prompt_state, context_state, choice_state,
-            step_log_state, top_k_state, token_texts_state,
+            top_k_state, token_texts_state,
         ],
         outputs=common_outputs,
     )
