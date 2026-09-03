@@ -1,11 +1,14 @@
-"""Interactive Gradio app for teaching AI inputs, outputs, and confidence."""
+"""QUT001 interactive character-classification demo."""
 
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import os
+from pathlib import Path
 from functools import lru_cache
+from io import BytesIO
 from typing import Any
 
 import gradio as gr
@@ -15,217 +18,890 @@ from PIL import Image, ImageOps
 
 from qut001.character_classification_model import (
     CLASS_NAMES,
-    DIGIT_NAMES,
     INPUT_MEAN,
     INPUT_STD,
-    LETTER_NAMES,
     load_model,
 )
 
-CANVAS_SIZE = 420
-INTENTION_OPTIONS = [
-    "Not specified",
-    *CLASS_NAMES,
-    "Ambiguous between characters",
-    "Not a single digit or letter",
-]
+from qut001.constants import IMAGE_DIR
 
-CHALLENGES = {
-    "1. Clear character": (
-        "Draw one clear digit or letter. Predict the model's answer before you "
-        "press **Make prediction**. Lowercase and uppercase letters share a class."
-    ),
-    "2. Look-alike characters": (
-        "Try a confusing pair such as 0/O, 1/I/L, 2/Z, 5/S, 8/B, or G/Q. "
-        "Inspect the top competing output scores."
-    ),
-    "3. Change one thing": (
-        "Change only one feature—colour, thickness, size, position, or letter "
-        "case—and compare the new output with the previous prediction."
-    ),
-    "4. Outside the task": (
-        "Draw punctuation, an emoji, a shape, several characters, or a scribble. "
-        "Choose **Not a single digit or letter**. The model must still select "
-        "one of its 36 available classes."
-    ),
-}
+CANVAS_SIZE = 380
+PREVIEW_SIZE = 132
 
-APP_CSS = """
+# Visual assets are loaded from data/images/ at startup. The QUT image is the
+# official logo image supplied for this demo.
+
+QUT_LOGO_PATH = Path(os.path.join(IMAGE_DIR, "qut.png"))
+QUT_LOGO_B64 = base64.b64encode(QUT_LOGO_PATH.read_bytes()).decode("ascii")
+BACKGROUND_TEXTURE_PATH = Path(os.path.join(IMAGE_DIR, "background_texture.png"))
+BACKGROUND_TEXTURE_B64 = base64.b64encode(BACKGROUND_TEXTURE_PATH.read_bytes()).decode("ascii")
+
+APP_CSS = r"""
 :root {
-    --qut-blue: #005ea8;
-    --deep-blue: #093b66;
-    --soft-blue: #edf6fc;
-    --soft-grey: #f5f7f9;
-    --ink: #17212b;
+  --qut-blue:#00467f;
+  --qut-blue-2:#0a5c9e;
+  --ink:#0e1726;
+  --muted:#667085;
+  --line:#dbe3ed;
+  --paper:#ffffff;
+  --shadow:0 18px 44px rgba(13,34,61,.14);
 }
-.gradio-container { max-width: 1550px !important; }
+
+html,body {
+  min-height:100%;
+  background-color:#e9eef4;
+  background-image:
+    url("__BACKGROUND_TEXTURE_URL__"),
+    radial-gradient(circle at 15% 0%,#f8fbff 0,#edf2f7 38%,#e5ebf1 100%);
+  background-repeat:repeat, no-repeat;
+  background-size:800px 520px, cover;
+  background-attachment:scroll, scroll;
+}
+
+.gradio-container {
+  max-width:1480px!important;
+  padding:12px 20px 18px!important;
+  position:relative;
+  z-index:1;
+  font-family:Arial,Helvetica,sans-serif!important;
+}
+
+footer {display:none!important;}
+
 .hero {
-    background: linear-gradient(120deg, var(--deep-blue), var(--qut-blue));
-    color: white;
-    padding: 1.4rem 1.6rem;
-    border-radius: 16px;
-    margin-bottom: 1rem;
+  position:relative;
+  overflow:hidden;
+  min-height:154px;
+  display:grid;
+  grid-template-columns:1fr 126px;
+  align-items:center;
+  gap:18px;
+  padding:18px 22px 17px;
+  border-radius:26px;
+  background:linear-gradient(125deg,#063866 0%,#00467f 58%,#0c5d9f 100%);
+  border:1px solid rgba(255,255,255,.22);
+  box-shadow:0 22px 55px rgba(0,50,92,.25);
 }
-.hero h1 { margin: 0 0 .35rem 0; font-size: 2rem; }
-.hero p { margin: 0; font-size: 1.05rem; max-width: 1100px; }
-.stage-label { font-weight: 750; font-size: 1.05rem; margin-bottom: .4rem; }
-.arrow-card {
-    display: flex; justify-content: center; align-items: center;
-    min-height: 220px; font-size: 2.6rem; color: var(--qut-blue); font-weight: 800;
+
+.hero:before,.hero:after{
+  content:"";
+  position:absolute;
+  border-radius:50%;
+  background:rgba(255,255,255,.06);
+  pointer-events:none;
 }
-.model-card {
-    border: 2px solid var(--qut-blue); background: var(--soft-blue);
-    border-radius: 14px; padding: 1rem; min-height: 210px;
-    display: flex; flex-direction: column; justify-content: center; text-align: center;
+.hero:before{width:250px;height:250px;right:30px;top:-170px}
+.hero:after{width:190px;height:190px;left:-80px;bottom:-130px}
+
+.title-art {
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:5px;
+  position:relative;
+  z-index:2;
 }
-.model-card .model-icon { font-size: 2.5rem; }
-.model-card strong { font-size: 1.15rem; }
-.output-card {
-    border: 1px solid #d7dee5; border-radius: 14px;
-    padding: .9rem 1rem; background: white;
+
+.title-line {
+  margin:0;
+  font-size:44px;
+  line-height:1.15;
+  font-weight:800;
+  letter-spacing:1.5px;
+  color:#ffffff;
+  white-space:nowrap;
+  text-shadow:0 2px 10px rgba(0,20,40,.35);
 }
-.prediction-headline { font-size: 1.2rem; font-weight: 750; margin-bottom: .35rem; }
-.group-summary { font-size: .9rem; color: #44515e; margin-bottom: .7rem; }
-.pred-row {
-    display: grid; grid-template-columns: 2.1rem 1fr 4rem;
-    align-items: center; gap: .55rem; margin: .28rem 0;
+
+.qut-logo-frame {
+  position:relative;
+  z-index:2;
+  width:118px;
+  height:72px;
+  overflow:hidden;
+  border-radius:11px;
+  background:#00467f;
+  border:1px solid rgba(255,255,255,.34);
+  box-shadow:0 8px 18px rgba(0,0,0,.16);
+  justify-self:end;
 }
-.pred-track { background: #e9edf1; border-radius: 999px; overflow: hidden; height: 1rem; }
-.pred-fill { background: #7b8794; height: 100%; min-width: 0; transition: width .25s ease; }
-.pred-row.top .pred-fill { background: var(--qut-blue); }
-.pred-row.top .character, .pred-row.top .pct { font-weight: 800; }
-.notice { border-left: 5px solid var(--qut-blue); background: var(--soft-blue); padding: .85rem 1rem; border-radius: 8px; }
-.warning { border-left-color: #ad5b00; background: #fff5e8; }
-.success { border-left-color: #19733b; background: #edf9f1; }
-.comparison { background: var(--soft-grey); padding: .8rem 1rem; border-radius: 10px; }
-.pixel-note { font-size: .93rem; background: var(--soft-grey); padding: .65rem .8rem; border-radius: 9px; }
-.challenge-box { background: #f8fbfe; border: 1px solid #cfe3f2; padding: .85rem 1rem; border-radius: 10px; }
-.score-section-title { font-weight: 800; margin: .7rem 0 .35rem; }
-.score-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: .4rem; }
-.score-chip { border: 1px solid #d7dee5; border-radius: 8px; padding: .42rem .5rem; background: white; display:flex; justify-content:space-between; gap:.35rem; }
-.score-chip.top { border: 2px solid var(--qut-blue); background: var(--soft-blue); font-weight: 800; }
-@media (max-width: 900px) {
-    .arrow-card { min-height: auto; transform: rotate(90deg); padding: .3rem; }
+.qut-logo-frame img {
+  position:absolute;
+  width:118px;
+  height:118px;
+  left:0;
+  top:0;
+  object-fit:cover;
+  object-position:top center;
+}
+
+.tagline {
+  margin:11px auto 14px;
+  text-align:center;
+  font-size:23px;
+  line-height:1.3;
+  font-weight:700;
+  letter-spacing:.005em;
+  color:#17233a;
+  text-shadow:0 1px 0 rgba(255,255,255,.9);
+}
+
+.pipeline-row {align-items:stretch!important}
+
+.stage-card {
+  position:relative;
+  min-height:560px;
+  padding:13px!important;
+  border-radius:24px!important;
+  background:rgba(255,255,255,.96)!important;
+  border:1px solid rgba(255,255,255,.90)!important;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
+
+.stage-card:before {
+  content:"";
+  position:absolute;
+  inset:0 0 auto 0;
+  height:5px;
+  background:linear-gradient(90deg,#081a2f,#00467f,#1b78bc);
+}
+
+.stage-heading {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  height:42px;
+  margin-bottom:12px;
+  color:#101b2e;
+  font-size:19px;
+  font-weight:900;
+  letter-spacing:.01em;
+}
+.stage-heading .num {
+  width:31px;height:31px;
+  border-radius:9px;
+  display:grid;
+  place-items:center;
+  background:#0e1726;
+  color:#fff;
+  font-size:17px;
+  box-shadow:0 5px 12px rgba(14,23,38,.16);
+}
+
+.arrow-column {
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  min-width:52px!important;
+}
+.arrow-wrap {
+  width:100%;
+  min-height:560px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.arrow {
+  width:52px;height:52px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  background:#0e1726;
+  color:#fff;
+  font-size:27px;
+  font-weight:900;
+  box-shadow:0 10px 24px rgba(14,23,38,.20);
+}
+
+.native-canvas-shell {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+}
+
+.input-work-area{align-items:flex-start!important;gap:12px!important;flex-wrap:nowrap!important}
+.input-work-area > .gradio-column{min-width:0!important}
+.input-draw-col{min-width:410px!important}
+.input-preview-col{min-width:180px!important}
+.canvas-toolbar {
+  width:380px;
+  max-width:100%;
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:7px 9px;
+  border-radius:13px;
+  background:#f1f4f8;
+  border:1px solid #dce4ee;
+}
+.palette{display:flex;align-items:center;gap:6px}
+.palette-btn{
+  width:27px;height:27px;
+  border-radius:50%;
+  border:2px solid rgba(14,23,38,.20);
+  padding:0;
+  cursor:pointer;
+  box-shadow:0 2px 5px rgba(0,0,0,.10);
+}
+.palette-btn.active{outline:3px solid rgba(0,70,127,.23);outline-offset:2px}
+.canvas-tool-group{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;color:#4f5e73}
+.canvas-tool-group input[type=range]{width:86px}
+.eraser-toggle{
+  border:1px solid #cfd8e4;background:#fff;color:#28364b;
+  border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;cursor:pointer
+}
+.eraser-toggle.active{background:#0e1726;color:#fff;border-color:#0e1726}
+
+#drawing-canvas {
+  display:block;
+  width:380px;
+  height:380px;
+  max-width:100%;
+  background:#000;
+  border-radius:15px;
+  cursor:crosshair;
+  touch-action:none;
+  box-shadow:0 10px 24px rgba(6,28,52,.18), inset 0 0 0 1px rgba(255,255,255,.10);
+}
+
+.button-row{margin:4px auto 0;max-width:380px;width:100%}
+.button-row button{
+  min-height:50px!important;
+  font-family:Arial,Helvetica,sans-serif!important;
+  font-size:17px!important;
+  font-weight:900!important;
+  border-radius:12px!important;
+}
+
+.processed-placeholder {
+  max-width:none;
+  width:100%;
+  margin:0;
+  min-height:208px;
+  border:1px dashed #c8d3e0;
+  border-radius:14px;
+  display:grid;
+  place-items:center;
+  color:#78869a;
+  font-size:14px;
+  font-weight:800;
+  background:#f8fafc;
+}
+
+.processed-panel {
+  max-width:none;
+  width:100%;
+  margin:0;
+  min-height:208px;
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  border-radius:15px;
+  background:#f5f7fa;
+  border:1px solid #dce4ee;
+}
+.processed-thumb {
+  width:128px;height:128px;
+  background:#000;
+  border-radius:10px;
+  padding:0;
+  overflow:hidden;
+  box-shadow:0 4px 12px rgba(0,0,0,.12);
+}
+.processed-thumb img{display:block;width:128px;height:128px;image-rendering:pixelated}
+.processed-label{
+  text-align:center;
+  font-size:17px;
+  line-height:1.35;
+  font-weight:800;
+  color:#4b5a6e;
+}
+.processed-label b{display:block;color:#18253a;font-size:17px;margin-bottom:4px}
+
+.model-stage {
+  display:flex;
+  flex-direction:column;
+}
+.model-visual-wrap {
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.model-visual {
+  position:relative;
+  width:170px;height:170px;
+  border-radius:44px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(145deg,#071421 0%,#0f2941 56%,#00467f 100%);
+  box-shadow:
+    0 22px 42px rgba(4,25,44,.28),
+    inset 0 1px 0 rgba(255,255,255,.13);
+  border:1px solid rgba(255,255,255,.15);
+}
+.model-visual:before,.model-visual:after{
+  content:"";
+  position:absolute;
+  width:196px;height:2px;
+  left:-16px;
+  background:linear-gradient(90deg,transparent,#79c9ff,transparent);
+  opacity:.42;
+}
+.model-visual:before{top:48px}
+.model-visual:after{bottom:48px}
+.model-chip {
+  width:102px;height:102px;
+  border-radius:29px;
+  display:grid;
+  place-items:center;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.18);
+  box-shadow:inset 0 0 32px rgba(56,161,227,.14);
+}
+.model-chip svg{width:68px;height:68px;display:block}
+.node-glow{filter:drop-shadow(0 0 5px rgba(117,207,255,.58))}
+
+.output-allowed {
+  display:inline-flex;
+  padding:8px 12px;
+  border-radius:999px;
+  background:#eff3f7;
+  border:1px solid #dce4ec;
+  color:#46566c;
+  font-size:14px;
+  font-weight:900;
+  margin-bottom:11px;
+}
+.prediction-empty {
+  min-height:355px;
+  border-radius:18px;
+  border:1px dashed #c9d4e0;
+  display:grid;
+  place-items:center;
+  text-align:center;
+  color:#8190a3;
+  font-size:17px;
+  font-weight:800;
+  background:linear-gradient(180deg,#fbfcfd,#f5f8fb);
+  padding:18px;
+}
+.prediction-card {
+  border-radius:19px;
+  border:1px solid #dbe4ee;
+  background:linear-gradient(180deg,#fff,#f7f9fc);
+  padding:12px;
+}
+.top-prediction {
+  min-height:205px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  border-radius:17px;
+  background:linear-gradient(145deg,#0a1726,#0a3154 62%,#005b9d);
+  color:#fff;
+  box-shadow:0 14px 30px rgba(7,31,53,.20);
+}
+.top-prediction .label{
+  font-size:14px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  font-weight:900;
+  color:#d8edff;
+}
+.top-prediction .char{
+  font-size:104px;
+  line-height:.92;
+  font-weight:900;
+  margin:8px 0 5px;
+  color:#fff;
+}
+.top-prediction .score{
+  font-size:24px;
+  font-weight:900;
+  color:#fff;
+}
+
+.ranking {margin-top:12px}
+.rank-row {
+  display:grid;
+  grid-template-columns:30px 1fr 60px;
+  align-items:center;
+  gap:8px;
+  margin:8px 0;
+}
+.rank-char{font-size:18px;font-weight:900;color:#18253a}
+.rank-track{height:12px;border-radius:999px;background:#e5ebf1;overflow:hidden}
+.rank-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#7ac5f7,#005a9b)}
+.rank-pct{text-align:right;font-size:14px;font-weight:900;color:#5a687b}
+
+.app-footer{
+  margin-top:15px;
+  padding:11px 14px 2px;
+  border-top:1px solid rgba(28,45,69,.16);
+  text-align:center;
+  color:#58677c;
+  font-size:14px;
+  line-height:1.5;
+  font-weight:600;
+}
+
+@media(max-width:1250px){
+  .gradio-container{max-width:1180px!important;padding-left:12px!important;padding-right:12px!important}
+  .title-line{font-size:39px}
+  .hero{grid-template-columns:1fr 110px}
+  .qut-logo-frame{width:105px;height:64px}.qut-logo-frame img{width:105px;height:105px}
+  .stage-card{min-height:530px;padding:12px!important}
+  .arrow-wrap{min-height:530px}
+  .input-draw-col{min-width:380px!important}
+}
+
+@media(max-width:980px){
+  .hero{grid-template-columns:1fr}.qut-logo-frame{position:absolute;right:18px;top:18px}
+  .title-line{font-size:34px}
+  .pipeline-row{flex-direction:column!important}
+  .stage-card{min-height:auto}
+  .input-work-area{flex-direction:column!important}
+  .input-draw-col,.input-preview-col{min-width:0!important}
+  .arrow-wrap{min-height:auto;padding:5px 0}.arrow{transform:rotate(90deg)}
+}
+
+@media(max-width:600px){
+  .title-line{font-size:25px;letter-spacing:1px}
+  .qut-logo-frame{display:none}
+  #drawing-canvas{width:100%;height:auto;aspect-ratio:1}
+  .canvas-toolbar,.button-row{width:100%;max-width:100%}
 }
 """
 
 
-def blank_canvas() -> Image.Image:
-    return Image.new("RGB", (CANVAS_SIZE, CANVAS_SIZE), color="black")
+# Final laptop-responsive sizing/readability pass.
+APP_CSS += r"""
+.gradio-container{
+  width:min(88vw,1650px)!important;
+  max-width:none!important;
+  margin-left:auto!important;
+  margin-right:auto!important;
+  padding-left:10px!important;
+  padding-right:10px!important;
+}
+
+.tagline{
+  font-size:27px!important;
+  line-height:1.25!important;
+  margin:10px auto 13px!important;
+}
+
+.stage-card{
+  min-height:525px!important;
+  padding:12px!important;
+}
+.stage-heading{
+  height:38px!important;
+  margin-bottom:9px!important;
+  font-size:20px!important;
+}
+.arrow-wrap{min-height:525px!important}
+
+.input-work-area{
+  gap:14px!important;
+  align-items:stretch!important;
+}
+.input-draw-col{min-width:390px!important}
+.input-preview-col{min-width:220px!important}
+
+.canvas-toolbar{
+  width:380px!important;
+  min-height:42px!important;
+}
+#drawing-canvas{
+  width:380px!important;
+  height:380px!important;
+}
+.button-row{
+  width:380px!important;
+  max-width:380px!important;
+}
+.button-row button{
+  min-height:52px!important;
+  font-size:20px!important;
+  line-height:1.1!important;
+}
+
+.processed-placeholder,
+.processed-panel{
+  width:100%!important;
+  min-width:0!important;
+  box-sizing:border-box!important;
+  min-height:196px!important;
+  padding:14px!important;
+}
+.processed-placeholder{
+  display:flex!important;
+  flex-direction:column!important;
+  justify-content:center!important;
+  align-items:center!important;
+  gap:7px!important;
+  text-align:center!important;
+  font-size:16px!important;
+  line-height:1.35!important;
+}
+.processed-placeholder b{
+  display:block!important;
+  color:#18253a!important;
+  font-size:21px!important;
+  line-height:1.15!important;
+}
+.processed-placeholder span{
+  display:block!important;
+  color:#78869a!important;
+  font-size:15px!important;
+  line-height:1.35!important;
+}
+.processed-thumb{
+  width:132px!important;
+  height:132px!important;
+  flex:0 0 132px!important;
+}
+.processed-thumb img{
+  width:132px!important;
+  height:132px!important;
+}
+.processed-label{
+  font-size:17px!important;
+  line-height:1.3!important;
+}
+.processed-label b{
+  font-size:21px!important;
+  line-height:1.15!important;
+  margin-bottom:5px!important;
+}
+
+.model-visual{
+  width:158px!important;
+  height:158px!important;
+}
+.model-visual:before,.model-visual:after{width:184px!important}
+.model-chip{
+  width:96px!important;
+  height:96px!important;
+}
+.model-chip svg{
+  width:65px!important;
+  height:65px!important;
+}
+
+.output-allowed{
+  padding:9px 13px!important;
+  margin-bottom:9px!important;
+  font-size:18px!important;
+  line-height:1.2!important;
+}
+.prediction-empty{
+  min-height:344px!important;
+  font-size:18px!important;
+  line-height:1.4!important;
+}
+.prediction-card{padding:11px!important}
+.top-prediction{
+  min-height:190px!important;
+}
+.top-prediction .label{
+  font-size:19px!important;
+  line-height:1.15!important;
+}
+.top-prediction .char{
+  font-size:96px!important;
+  margin:5px 0 3px!important;
+}
+.top-prediction .score{
+  font-size:27px!important;
+}
+.ranking{margin-top:10px!important}
+.rank-row{
+  grid-template-columns:34px 1fr 67px!important;
+  gap:9px!important;
+  margin:9px 0!important;
+}
+.rank-char{
+  font-size:21px!important;
+  line-height:1!important;
+}
+.rank-track{height:13px!important}
+.rank-pct{
+  font-size:17px!important;
+  line-height:1!important;
+}
+
+@media(max-width:1450px){
+  .gradio-container{
+    width:96vw!important;
+    max-width:none!important;
+  }
+}
+
+@media(max-width:1180px){
+  .gradio-container{width:97vw!important}
+  .input-work-area{flex-direction:column!important}
+  .input-draw-col,.input-preview-col{min-width:0!important}
+  .processed-placeholder,.processed-panel{max-width:380px!important;margin:0 auto!important}
+}
+
+@media(max-width:980px){
+  #drawing-canvas{width:100%!important;height:auto!important;aspect-ratio:1}
+  .canvas-toolbar,.button-row{width:100%!important;max-width:100%!important}
+}
+"""
+
+APP_CSS = APP_CSS.replace(
+    "__BACKGROUND_TEXTURE_URL__", f"data:image/png;base64,{BACKGROUND_TEXTURE_B64}"
+)
 
 
-def blank_model_preview() -> Image.Image:
-    return Image.new("L", (280, 280), color=0)
+def title_tile_markup() -> str:
+    """Header title text for the hero banner."""
+    line_texts = ["UNDERSTANDING", "THE AI PIPELINE"]
+    return "".join(
+        f'<div class="title-line">{html.escape(text)}</div>' for text in line_texts
+    )
 
 
-def editor_to_rgb(editor_value: Any) -> Image.Image:
-    """Extract the composite image from a Gradio ImageEditor value."""
+def header_html() -> str:
+    return f"""
+    <div class="hero">
+      <div class="title-art">{title_tile_markup()}</div>
+      <div class="qut-logo-frame">
+        <img src="data:image/png;base64,{QUT_LOGO_B64}" alt="QUT logo">
+      </div>
+    </div>
+    <div class="tagline">Draw a number or letter and test the AI model's predictions.</div>
+    """
 
-    if editor_value is None:
-        return blank_canvas()
 
-    value = editor_value
-    if isinstance(editor_value, dict):
-        value = editor_value.get("composite")
-        if value is None:
-            value = editor_value.get("background")
+def native_canvas_html() -> str:
+    return f"""
+    <div class="native-canvas-shell">
+      <div class="canvas-toolbar">
+        <div class="palette" aria-label="Drawing colours">
+          <button type="button" class="palette-btn active" data-colour="#FFFFFF" style="background:#FFFFFF" title="White"></button>
+          <button type="button" class="palette-btn" data-colour="#FF5252" style="background:#FF5252" title="Red"></button>
+          <button type="button" class="palette-btn" data-colour="#FFD740" style="background:#FFD740" title="Yellow"></button>
+          <button type="button" class="palette-btn" data-colour="#69F0AE" style="background:#69F0AE" title="Green"></button>
+          <button type="button" class="palette-btn" data-colour="#40C4FF" style="background:#40C4FF" title="Blue"></button>
+          <button type="button" class="palette-btn" data-colour="#7C4DFF" style="background:#7C4DFF" title="Purple"></button>
+        </div>
+        <div class="canvas-tool-group">
+          <span>Brush</span>
+          <input id="brush-size" type="range" min="8" max="52" value="28" aria-label="Brush size">
+          <button type="button" id="eraser-toggle" class="eraser-toggle">Eraser</button>
+        </div>
+      </div>
+      <canvas id="drawing-canvas" width="{CANVAS_SIZE}" height="{CANVAS_SIZE}" aria-label="Drawing canvas"></canvas>
+    </div>
+    """
 
-    if value is None:
-        return blank_canvas()
-    if isinstance(value, Image.Image):
-        return value.convert("RGB")
-    if isinstance(value, np.ndarray):
-        array = value
-        if array.dtype != np.uint8:
-            array = np.clip(array, 0, 255).astype(np.uint8)
-        return Image.fromarray(array).convert("RGB")
-    if isinstance(value, str):
-        return Image.open(value).convert("RGB")
 
-    raise TypeError(f"Unsupported editor value type: {type(value)!r}")
+APP_JS = r"""
+() => {
+  function setupCanvas() {
+    const canvas = document.getElementById('drawing-canvas');
+    if (!canvas) return false;
+    if (canvas.dataset.aiReady === '1') return true;
+
+    canvas.dataset.aiReady = '1';
+    const ctx = canvas.getContext('2d');
+    let drawing = false;
+    let colour = '#FFFFFF';
+    let brushSize = 28;
+    let erasing = false;
+    let lastX = 0, lastY = 0;
+    let rect = canvas.getBoundingClientRect();
+    let pending = [];
+    let frame = 0;
+
+    const updateRect = () => { rect = canvas.getBoundingClientRect(); };
+    const point = (ev) => ({
+      x:(ev.clientX - rect.left) * canvas.width / rect.width,
+      y:(ev.clientY - rect.top) * canvas.height / rect.height
+    });
+
+    const fillBlack = () => {
+      pending = [];
+      if (frame) { cancelAnimationFrame(frame); frame = 0; }
+      ctx.save();
+      ctx.globalCompositeOperation='source-over';
+      ctx.fillStyle='#000000';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.restore();
+    };
+
+    const configureBrush = () => {
+      ctx.lineCap='round';
+      ctx.lineJoin='round';
+      ctx.lineWidth=brushSize;
+      ctx.strokeStyle=erasing ? '#000000' : colour;
+      ctx.fillStyle=erasing ? '#000000' : colour;
+    };
+
+    const drawPoint = (p) => {
+      configureBrush();
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,brushSize/2,0,Math.PI*2);
+      ctx.fill();
+    };
+
+    const flush = () => {
+      frame = 0;
+      if (!drawing || pending.length === 0) { pending=[]; return; }
+      configureBrush();
+      for (const ev of pending) {
+        const p = point(ev);
+        ctx.beginPath();
+        ctx.moveTo(lastX,lastY);
+        ctx.lineTo(p.x,p.y);
+        ctx.stroke();
+        lastX=p.x; lastY=p.y;
+      }
+      pending=[];
+    };
+
+    const start = (ev) => {
+      ev.preventDefault();
+      updateRect();
+      drawing=true;
+      if (canvas.setPointerCapture) canvas.setPointerCapture(ev.pointerId);
+      const p=point(ev);
+      lastX=p.x; lastY=p.y;
+      drawPoint(p);
+    };
+
+    const move = (ev) => {
+      if (!drawing) return;
+      ev.preventDefault();
+      const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
+      pending.push(...events);
+      if (!frame) frame=requestAnimationFrame(flush);
+    };
+
+    const stop = (ev) => {
+      if (!drawing) return;
+      ev.preventDefault();
+      flush();
+      drawing=false;
+      try {
+        if (canvas.releasePointerCapture && canvas.hasPointerCapture(ev.pointerId)) {
+          canvas.releasePointerCapture(ev.pointerId);
+        }
+      } catch (_) {}
+    };
+
+    canvas.addEventListener('pointerdown',start,{passive:false});
+    canvas.addEventListener('pointermove',move,{passive:false});
+    canvas.addEventListener('pointerup',stop,{passive:false});
+    canvas.addEventListener('pointercancel',stop,{passive:false});
+    window.addEventListener('resize',updateRect,{passive:true});
+
+    document.querySelectorAll('.palette-btn').forEach((button)=>{
+      button.addEventListener('click',()=>{
+        colour=button.dataset.colour || '#FFFFFF';
+        erasing=false;
+        document.querySelectorAll('.palette-btn').forEach(b=>b.classList.remove('active'));
+        button.classList.add('active');
+        document.getElementById('eraser-toggle')?.classList.remove('active');
+      });
+    });
+
+    document.getElementById('brush-size')?.addEventListener('input',(ev)=>{
+      brushSize=Number(ev.target.value)||28;
+    });
+
+    document.getElementById('eraser-toggle')?.addEventListener('click',(ev)=>{
+      erasing=!erasing;
+      ev.currentTarget.classList.toggle('active',erasing);
+    });
+
+    fillBlack();
+    window.clearAICanvas=fillBlack;
+    window.getAICanvasData=()=>canvas.toDataURL('image/png');
+    return true;
+  }
+
+  window.setupAICanvas=setupCanvas;
+
+  // Gradio's load event normally runs after the HTML component is mounted.
+  // Short finite retries cover slower external/reverse-proxy page loads without
+  // leaving a MutationObserver running forever.
+  let attempts=0;
+  const trySetup=()=>{
+    if (setupCanvas()) return;
+    attempts += 1;
+    if (attempts < 12) setTimeout(trySetup, 90 * attempts);
+  };
+  trySetup();
+}
+"""
+
+
+def data_url_to_rgb(data_url: str | None) -> Image.Image:
+    if not data_url:
+        return Image.new("RGB",(CANVAS_SIZE,CANVAS_SIZE),"black")
+    if "," not in data_url:
+        raise ValueError("Canvas image data was not in the expected format.")
+    _, encoded = data_url.split(",",1)
+    raw = base64.b64decode(encoded)
+    return Image.open(BytesIO(raw)).convert("RGB")
 
 
 def shift_with_zeros(image: np.ndarray, shift_y: int, shift_x: int) -> np.ndarray:
-    """Translate an image without wrapping pixels around the edges."""
-
-    output = np.zeros_like(image)
-    source_y0 = max(0, -shift_y)
-    source_y1 = min(image.shape[0], image.shape[0] - shift_y)
-    source_x0 = max(0, -shift_x)
-    source_x1 = min(image.shape[1], image.shape[1] - shift_x)
-    target_y0 = max(0, shift_y)
-    target_x0 = max(0, shift_x)
-    target_y1 = target_y0 + max(0, source_y1 - source_y0)
-    target_x1 = target_x0 + max(0, source_x1 - source_x0)
-
-    if source_y1 > source_y0 and source_x1 > source_x0:
-        output[target_y0:target_y1, target_x0:target_x1] = image[
-            source_y0:source_y1, source_x0:source_x1
-        ]
+    output=np.zeros_like(image)
+    source_y0=max(0,-shift_y)
+    source_y1=min(image.shape[0],image.shape[0]-shift_y)
+    source_x0=max(0,-shift_x)
+    source_x1=min(image.shape[1],image.shape[1]-shift_x)
+    target_y0=max(0,shift_y)
+    target_x0=max(0,shift_x)
+    target_y1=target_y0+max(0,source_y1-source_y0)
+    target_x1=target_x0+max(0,source_x1-source_x0)
+    if source_y1>source_y0 and source_x1>source_x0:
+        output[target_y0:target_y1,target_x0:target_x1]=image[source_y0:source_y1,source_x0:source_x1]
     return output
 
 
 def centre_and_resize(grayscale: Image.Image) -> np.ndarray:
-    """Convert a drawing to an EMNIST-like centred 28 × 28 image."""
-
-    source = np.asarray(grayscale, dtype=np.uint8)
-    active = source > 8
+    source=np.asarray(grayscale,dtype=np.uint8)
+    active=source>8
     if not np.any(active):
-        return np.zeros((28, 28), dtype=np.uint8)
-
-    ys, xs = np.where(active)
-    crop = grayscale.crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
-
-    width, height = crop.size
-    scale = min(20 / max(width, 1), 20 / max(height, 1))
-    resized_width = max(1, round(width * scale))
-    resized_height = max(1, round(height * scale))
-    crop = crop.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
-
-    canvas = Image.new("L", (28, 28), color=0)
-    left = (28 - resized_width) // 2
-    top = (28 - resized_height) // 2
-    canvas.paste(crop, (left, top))
-
-    array = np.asarray(canvas, dtype=np.uint8)
-    weights = array.astype(np.float32)
-    total = float(weights.sum())
-    if total > 0:
-        y_grid, x_grid = np.indices(array.shape)
-        centre_y = float((y_grid * weights).sum() / total)
-        centre_x = float((x_grid * weights).sum() / total)
-        array = shift_with_zeros(
-            array,
-            shift_y=int(round(13.5 - centre_y)),
-            shift_x=int(round(13.5 - centre_x)),
-        )
-    return array
+        return np.zeros((28,28),dtype=np.uint8)
+    ys,xs=np.where(active)
+    crop=grayscale.crop((xs.min(),ys.min(),xs.max()+1,ys.max()+1))
+    width,height=crop.size
+    scale=min(20/max(width,1),20/max(height,1))
+    rw=max(1,round(width*scale)); rh=max(1,round(height*scale))
+    crop=crop.resize((rw,rh),Image.Resampling.LANCZOS)
+    canvas=Image.new("L",(28,28),0)
+    canvas.paste(crop,((28-rw)//2,(28-rh)//2))
+    arr=np.asarray(canvas,dtype=np.uint8)
+    weights=arr.astype(np.float32)
+    total=float(weights.sum())
+    if total>0:
+        yg,xg=np.indices(arr.shape)
+        cy=float((yg*weights).sum()/total)
+        cx=float((xg*weights).sum()/total)
+        arr=shift_with_zeros(arr,int(round(13.5-cy)),int(round(13.5-cx)))
+    return arr
 
 
-def preprocess(editor_value: Any, mode: str) -> tuple[np.ndarray, Image.Image, str]:
-    """Create the model input, enlarged preview, and input-description HTML."""
-
-    rgb = editor_to_rgb(editor_value)
-    grayscale = ImageOps.grayscale(rgb)
-
-    if mode == "Resize the whole canvas":
-        model_array = np.asarray(
-            grayscale.resize((28, 28), Image.Resampling.LANCZOS), dtype=np.uint8
-        )
-    else:
-        model_array = centre_and_resize(grayscale)
-
-    preview = Image.fromarray(model_array).resize((280, 280), Image.Resampling.NEAREST)
-    lit_pixels = int((model_array > 16).sum())
-    max_intensity = int(model_array.max())
-    input_note = (
-        '<div class="pixel-note"><strong>The model receives:</strong> '
-        '28 × 28 grayscale pixels = <strong>784 numbers</strong>.<br>'
-        f'Pixels with visible signal: <strong>{lit_pixels}</strong>/784; '
-        f'brightest value: <strong>{max_intensity}</strong>/255. '
-        "Drawing colour has been converted to brightness.</div>"
-    )
-    return model_array, preview, input_note
+def preprocess(canvas_data_url: str | None) -> np.ndarray:
+    rgb=data_url_to_rgb(canvas_data_url)
+    return centre_and_resize(ImageOps.grayscale(rgb))
 
 
 @lru_cache(maxsize=1)
@@ -233,463 +909,192 @@ def get_model() -> torch.nn.Module:
     return load_model("cpu")
 
 
-def empty_prediction_html(message: str = "No prediction yet") -> str:
-    rows = "".join(
-        (
-            '<div class="pred-row">'
-            f'<span class="character">{name}</span>'
-            '<div class="pred-track"><div class="pred-fill" style="width:0%"></div></div>'
-            '<span class="pct">—</span></div>'
-        )
-        for name in CLASS_NAMES[:8]
-    )
-    return (
-        '<div class="output-card">'
-        f'<div class="prediction-headline">{html.escape(message)}</div>'
-        '<div class="group-summary">The highest-ranked outputs will appear here.</div>'
-        f"{rows}</div>"
-    )
+def image_to_data_uri(image: Image.Image) -> str:
+    buf=BytesIO()
+    image.save(buf,format="PNG")
+    return "data:image/png;base64,"+base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def empty_full_scores_html() -> str:
-    return '<div class="pixel-note">All 36 class scores will appear after prediction.</div>'
+def blank_processed_html() -> str:
+    return '<div class="processed-placeholder"><b>Image sent to AI</b><span>The 28 × 28 input will appear here after prediction.</span></div>'
+
+
+def processed_html(model_array: np.ndarray) -> str:
+    preview=Image.fromarray(model_array).resize((PREVIEW_SIZE,PREVIEW_SIZE),Image.Resampling.NEAREST)
+    uri=image_to_data_uri(preview)
+    return f"""
+    <div class="processed-panel">
+      <div class="processed-thumb"><img src="{uri}" alt="28 by 28 image sent to the AI"></div>
+      <div class="processed-label"><b>Image sent to AI</b>28 × 28 grayscale</div>
+    </div>
+    """
+
+
+def empty_prediction_html(message: str="Draw something, then click Make prediction.") -> str:
+    return f'<div class="prediction-empty">{html.escape(message)}</div>'
 
 
 def prediction_html(probabilities: np.ndarray) -> str:
-    ranking = np.argsort(probabilities)[::-1]
-    top_index = int(ranking[0])
-    top_name = CLASS_NAMES[top_index]
-    top_score = float(probabilities[top_index])
-    digit_total = float(probabilities[:10].sum())
-    letter_total = float(probabilities[10:].sum())
-
-    rows: list[str] = []
-    for rank, class_index in enumerate(ranking[:10]):
-        name = CLASS_NAMES[int(class_index)]
-        score = float(probabilities[class_index])
-        top_class = " top" if rank == 0 else ""
-        width = max(0.0, min(100.0, score * 100.0))
+    ranking=np.argsort(probabilities)[::-1]
+    top=int(ranking[0])
+    rows=[]
+    for idx in ranking[:5]:
+        score=float(probabilities[idx])
         rows.append(
-            f'<div class="pred-row{top_class}">'
-            f'<span class="character">{name}</span>'
-            '<div class="pred-track">'
-            f'<div class="pred-fill" style="width:{width:.2f}%"></div>'
-            "</div>"
-            f'<span class="pct">{score:.1%}</span></div>'
+            f'<div class="rank-row"><div class="rank-char">{CLASS_NAMES[int(idx)]}</div>'
+            f'<div class="rank-track"><div class="rank-fill" style="width:{score*100:.2f}%"></div></div>'
+            f'<div class="rank-pct">{score:.1%}</div></div>'
         )
-
-    return (
-        '<div class="output-card">'
-        f'<div class="prediction-headline">Top prediction: {top_name} '
-        f'<span style="font-weight:500">({top_score:.1%} model score)</span></div>'
-        f'<div class="group-summary">Total score assigned to digits: {digit_total:.1%} · '
-        f'letters: {letter_total:.1%}<br>Showing the ten highest of 36 outputs.</div>'
-        + "".join(rows)
-        + "</div>"
-    )
-
-
-def full_scores_html(probabilities: np.ndarray) -> str:
-    top_index = int(np.argmax(probabilities))
-
-    def chips(indices: range) -> str:
-        parts = []
-        for index in indices:
-            top_class = " top" if index == top_index else ""
-            parts.append(
-                f'<div class="score-chip{top_class}"><strong>{CLASS_NAMES[index]}</strong>'
-                f'<span>{float(probabilities[index]):.1%}</span></div>'
-            )
-        return "".join(parts)
-
-    return (
-        '<div class="score-section-title">Digits</div>'
-        f'<div class="score-grid">{chips(range(0, 10))}</div>'
-        '<div class="score-section-title">Letters (case-insensitive)</div>'
-        f'<div class="score-grid">{chips(range(10, 36))}</div>'
-    )
+    return f"""
+    <div class="prediction-card">
+      <div class="top-prediction">
+        <div class="label">Prediction</div>
+        <div class="char">{CLASS_NAMES[top]}</div>
+        <div class="score">{float(probabilities[top]):.1%}</div>
+      </div>
+      <div class="ranking">{''.join(rows)}</div>
+    </div>
+    """
 
 
-def interpretation_html(probabilities: np.ndarray, intention: str) -> str:
-    ranking = np.argsort(probabilities)[::-1]
-    top_index = int(ranking[0])
-    second_index = int(ranking[1])
-    top_name = CLASS_NAMES[top_index]
-    second_name = CLASS_NAMES[second_index]
-    top_score = float(probabilities[top_index])
-    second_score = float(probabilities[second_index])
-    margin = top_score - second_score
-
-    if intention == "Not a single digit or letter":
-        outcome = (
-            '<div class="notice warning"><strong>You said this was outside the task.</strong> '
-            f'The model still selected <strong>{top_name}</strong> because its only allowed '
-            "outputs are 0–9 and A–Z. A strong score does not prove that the input belongs "
-            "to the task.</div>"
-        )
-    elif intention == "Ambiguous between characters":
-        outcome = (
-            '<div class="notice"><strong>You intended an ambiguous character.</strong> '
-            f'The model ranked <strong>{top_name}</strong> first and <strong>{second_name}</strong> '
-            "second. Compare their scores and consider whether the output reflects the ambiguity.</div>"
-        )
-    elif intention in CLASS_NAMES:
-        intended_index = CLASS_NAMES.index(intention)
-        if top_index == intended_index:
-            outcome = (
-                '<div class="notice success"><strong>The output matched your intention.</strong> '
-                f'You intended {intention}, and the model ranked it first. Uppercase and '
-                "lowercase forms are treated as the same letter class.</div>"
-            )
-        else:
-            intended_score = float(probabilities[intended_index])
-            outcome = (
-                '<div class="notice warning"><strong>The output did not match your intention.</strong> '
-                f'You intended {intention}, but the model selected {top_name}. It assigned '
-                f'{intended_score:.1%} to your intended class.</div>'
-            )
-    else:
-        outcome = (
-            '<div class="notice"><strong>What does the score mean?</strong> '
-            f'The model favoured {top_name} over {second_name} by {margin:.1%}. '
-            "This describes its relative output distribution, not a guarantee of correctness.</div>"
-        )
-
-    detail = (
-        '<div class="pixel-note" style="margin-top:.6rem">'
-        f'Second choice: <strong>{second_name}</strong> ({second_score:.1%}). '
-        f'Top-two gap: <strong>{margin:.1%}</strong>. '
-        "A small gap often indicates competing interpretations.</div>"
-    )
-    return outcome + detail
-
-
-def comparison_html(previous: list[float] | None, current: np.ndarray) -> str:
-    if previous is None:
-        return (
-            '<div class="comparison"><strong>First prediction recorded.</strong> '
-            "Change one part of the input, then predict again to compare the outputs.</div>"
-        )
-
-    previous_array = np.asarray(previous, dtype=np.float32)
-    previous_top = int(np.argmax(previous_array))
-    current_top = int(np.argmax(current))
-    previous_score = float(previous_array[previous_top])
-    current_score = float(current[current_top])
-    previous_name = CLASS_NAMES[previous_top]
-    current_name = CLASS_NAMES[current_top]
-
-    if previous_top == current_top:
-        delta = current_score - previous_score
-        direction = "increased" if delta >= 0 else "decreased"
-        return (
-            '<div class="comparison"><strong>The top prediction stayed the same:</strong> '
-            f'{current_name}. Its score {direction} from {previous_score:.1%} to '
-            f'{current_score:.1%} ({delta:+.1%}).</div>'
-        )
-
-    return (
-        '<div class="comparison"><strong>The model changed its mind:</strong> '
-        f'{previous_name} ({previous_score:.1%}) → {current_name} ({current_score:.1%}). '
-        "Which input change may have caused this?</div>"
-    )
-
-
-def predict(
-        editor_value: Any,
-        preprocessing_mode: str,
-        intention: str,
-        previous_probabilities: list[float] | None,
-) -> tuple[Image.Image, str, str, str, str, str, list[float] | None]:
+def predict(canvas_data_url: str | None) -> tuple[str,str]:
     try:
-        model_array, preview, input_note = preprocess(editor_value, preprocessing_mode)
+        model_array=preprocess(canvas_data_url)
     except Exception as exc:
-        return (
-            blank_model_preview(),
-            '<div class="notice warning">Could not read the drawing.</div>',
-            empty_prediction_html("Prediction unavailable"),
-            empty_full_scores_html(),
-            f'<div class="notice warning">{html.escape(str(exc))}</div>',
-            "",
-            previous_probabilities,
-        )
-
-    if int(model_array.max()) < 12 or int(model_array.sum()) < 100:
-        return (
-            preview,
-            input_note,
-            empty_prediction_html("The input appears blank"),
-            empty_full_scores_html(),
-            '<div class="notice warning"><strong>Draw something first.</strong> '
-            "A blank image is still an input, but this activity works better after you add a mark.</div>",
-            "",
-            previous_probabilities,
-        )
-
-    tensor = torch.from_numpy(model_array.astype(np.float32) / 255.0)
-    tensor = (tensor - INPUT_MEAN) / INPUT_STD
-    tensor = tensor.unsqueeze(0).unsqueeze(0)
-
+        return blank_processed_html(), empty_prediction_html(f"Could not read the drawing: {exc}")
+    processed=processed_html(model_array)
+    if int(model_array.max())<12 or int(model_array.sum())<100:
+        return processed, empty_prediction_html("The input appears blank.")
+    tensor=torch.from_numpy(model_array.astype(np.float32)/255.0)
+    tensor=(tensor-INPUT_MEAN)/INPUT_STD
+    tensor=tensor.unsqueeze(0).unsqueeze(0)
     try:
-        model = get_model()
+        model=get_model()
         with torch.inference_mode():
-            logits = model(tensor)
-            probabilities = torch.softmax(logits, dim=1)[0].cpu().numpy()
-    except FileNotFoundError as exc:
-        return (
-            preview,
-            input_note,
-            empty_prediction_html("Model setup required"),
-            empty_full_scores_html(),
-            '<div class="notice warning"><strong>The interface is ready, but the trained '
-            f'model is missing.</strong><br>{html.escape(str(exc))}</div>',
-            "",
-            previous_probabilities,
-        )
+            probabilities=torch.softmax(model(tensor),dim=1)[0].cpu().numpy()
     except Exception as exc:
-        return (
-            preview,
-            input_note,
-            empty_prediction_html("Prediction failed"),
-            empty_full_scores_html(),
-            f'<div class="notice warning">{html.escape(str(exc))}</div>',
-            "",
-            previous_probabilities,
-        )
-
-    return (
-        preview,
-        input_note,
-        prediction_html(probabilities),
-        full_scores_html(probabilities),
-        interpretation_html(probabilities, intention),
-        comparison_html(previous_probabilities, probabilities),
-        probabilities.astype(float).tolist(),
-    )
+        return processed, empty_prediction_html(f"Prediction unavailable: {exc}")
+    return processed,prediction_html(probabilities)
 
 
-def reset_app() -> tuple[Image.Image, Image.Image, str, str, str, str, str, None]:
-    return (
-        blank_canvas(),
-        blank_model_preview(),
-        '<div class="pixel-note">The processed 28 × 28 input will appear here.</div>',
-        empty_prediction_html(),
-        empty_full_scores_html(),
-        '<div class="notice">Draw one character, state what you intended, and make a prediction.</div>',
-        "",
-        None,
-    )
+def reset_app() -> tuple[str,str]:
+    return blank_processed_html(),empty_prediction_html()
 
 
-def challenge_text(challenge: str) -> str:
-    text = CHALLENGES.get(challenge, CHALLENGES["1. Clear character"])
-    return f'<div class="challenge-box"><strong>Your task:</strong> {text}</div>'
-
-
-# def build_demo() -> gr.Blocks:
-with gr.Blocks(title="What Does an AI Model See?") as demo:
-    gr.HTML(
-        """
-        <div class="hero">
-          <h1>What does an AI model see?</h1>
-          <p>Draw one digit or letter, inspect the exact 28 × 28 image received by
-          the model, and observe how its 36 output scores change.</p>
+def model_icon_html() -> str:
+    return """
+    <div class="model-visual-wrap">
+      <div class="model-visual">
+        <div class="model-chip">
+          <svg viewBox="0 0 100 100" role="img" aria-label="AI model icon">
+            <g fill="none" stroke="#8ed7ff" stroke-width="4" stroke-linecap="round" class="node-glow">
+              <path d="M22 26 L48 18 L75 31 L72 67 L47 80 L23 66 Z"/>
+              <path d="M22 26 L47 49 L75 31 M47 49 L72 67 M47 49 L23 66 M48 18 L47 49 L47 80"/>
+            </g>
+            <g fill="#ffffff" class="node-glow">
+              <circle cx="22" cy="26" r="6"/><circle cx="48" cy="18" r="6"/>
+              <circle cx="75" cy="31" r="6"/><circle cx="72" cy="67" r="6"/>
+              <circle cx="47" cy="80" r="6"/><circle cx="23" cy="66" r="6"/>
+              <circle cx="47" cy="49" r="8"/>
+            </g>
+          </svg>
         </div>
-        """
-    )
+      </div>
+    </div>
+    """
 
-    with gr.Row(equal_height=True):
-        with gr.Column(scale=5, min_width=310):
-            gr.HTML('<div class="stage-label">1. Create an input</div>')
-            drawing = gr.ImageEditor(
-                value=blank_canvas(),
-                label="Draw here",
-                show_label=False,
-                type="pil",
-                image_mode="RGB",
-                sources=[],
-                canvas_size=(CANVAS_SIZE, CANVAS_SIZE),
-                fixed_canvas=True,
-                transforms=(),
-                layers=False,
-                brush=gr.Brush(
-                    default_size=24,
-                    colors=[
-                        "#FFFFFF",
-                        "#FF5252",
-                        "#FFD740",
-                        "#69F0AE",
-                        "#40C4FF",
-                        "#7C4DFF",
-                    ],
-                    default_color="#FFFFFF",
-                    color_mode="defaults",
-                ),
-                eraser=gr.Eraser(default_size=32),
-                height=440,
-            )
-            intention = gr.Dropdown(
-                choices=INTENTION_OPTIONS,
-                value="Not specified",
-                label="What did you intend to draw?",
-                info=(
-                    "Choose A for either uppercase or lowercase a. This answer is "
-                    "used only for discussion; it is not given to the model."
-                ),
-            )
-            preprocessing_mode = gr.Radio(
-                choices=["Centre and resize", "Resize the whole canvas"],
-                value="Centre and resize",
-                label="Input preprocessing",
-                info="Try both modes to see how preprocessing changes the model input.",
-            )
-            with gr.Row():
-                predict_button = gr.Button("Make prediction", variant="primary", scale=3)
-                clear_button = gr.Button("Clear", scale=1)
 
-        with gr.Column(scale=1, min_width=60):
-            gr.HTML('<div class="arrow-card">→</div>')
+def gradio_major_version() -> int:
+    try:
+        return int(str(gr.__version__).split(".",1)[0])
+    except Exception:
+        return 6
 
-        with gr.Column(scale=3, min_width=260):
-            gr.HTML('<div class="stage-label">2. Model input</div>')
-            model_input = gr.Image(
-                value=blank_model_preview(),
-                label="Enlarged 28 × 28 grayscale input",
-                show_label=True,
-                interactive=False,
-                height=300,
-            )
-            input_note = gr.HTML(
-                '<div class="pixel-note">The processed 28 × 28 input will appear here.</div>'
-            )
 
-        with gr.Column(scale=1, min_width=60):
-            gr.HTML('<div class="arrow-card">→</div>')
+GRADIO_MAJOR=gradio_major_version()
+BLOCKS_KWARGS:dict[str,Any]={"title":"Understanding the AI Pipeline"}
+if GRADIO_MAJOR<6:
+    BLOCKS_KWARGS.update(css=APP_CSS)
 
-        with gr.Column(scale=3, min_width=250):
-            gr.HTML('<div class="stage-label">3. AI model</div>')
-            gr.HTML(
-                """
-                <div class="model-card">
-                  <div class="model-icon">⚙️</div>
-                  <strong>EMNIST character classifier</strong>
-                  <span>A neural network trained beforehand on labelled handwritten
-                  digits and letters.</span>
-                  <hr style="width:80%; border:none; border-top:1px solid #b7d3e8">
-                  <span>Available outputs: 0–9 and A–Z.<br>Letter case is merged.</span>
-                  <span>It is not learning from your drawing.</span>
-                </div>
-                """
-            )
+with gr.Blocks(**BLOCKS_KWARGS) as demo:
+    gr.HTML(header_html())
 
-        with gr.Column(scale=1, min_width=60):
-            gr.HTML('<div class="arrow-card">→</div>')
+    with gr.Row(equal_height=True,elem_classes="pipeline-row"):
+        with gr.Column(scale=9,min_width=650,elem_classes="stage-card"):
+            gr.HTML('<div class="stage-heading"><span class="num">1</span><span>Input</span></div>')
+            with gr.Row(equal_height=False, elem_classes="input-work-area"):
+                with gr.Column(scale=5, min_width=390, elem_classes="input-draw-col"):
+                    gr.HTML(native_canvas_html())
+                    canvas_data=gr.Textbox(value="",visible=False)
+                    with gr.Row(elem_classes="button-row"):
+                        predict_button=gr.Button("Make prediction",variant="primary",scale=3)
+                        clear_button=gr.Button("Clear",scale=1)
+                with gr.Column(scale=3, min_width=220, elem_classes="input-preview-col"):
+                    processed_output=gr.HTML(blank_processed_html())
 
-        with gr.Column(scale=5, min_width=340):
-            gr.HTML('<div class="stage-label">4. Output predictions</div>')
-            prediction_output = gr.HTML(empty_prediction_html())
+        with gr.Column(scale=1,min_width=52,elem_classes="arrow-column"):
+            gr.HTML('<div class="arrow-wrap"><div class="arrow">→</div></div>')
 
-    with gr.Accordion("See all 36 output scores", open=False):
-        full_prediction_output = gr.HTML(empty_full_scores_html())
+        with gr.Column(scale=3,min_width=190,elem_classes=["stage-card","model-stage"]):
+            gr.HTML('<div class="stage-heading"><span class="num">2</span><span>AI Model</span></div>')
+            gr.HTML(model_icon_html())
 
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### Interpret the result")
-            interpretation = gr.HTML(
-                '<div class="notice">Draw one character, state what you intended, and make a prediction.</div>'
-            )
-        with gr.Column(scale=1):
-            gr.Markdown("### Compare with the previous input")
-            comparison = gr.HTML("")
+        with gr.Column(scale=1,min_width=52,elem_classes="arrow-column"):
+            gr.HTML('<div class="arrow-wrap"><div class="arrow">→</div></div>')
 
-    gr.Markdown("## Guided experiments")
-    with gr.Row():
-        challenge = gr.Radio(
-            choices=list(CHALLENGES),
-            value="1. Clear character",
-            label="Choose a challenge",
-            scale=1,
-        )
-        challenge_prompt = gr.HTML(challenge_text("1. Clear character"), scale=2)
+        with gr.Column(scale=4,min_width=290,elem_classes="stage-card"):
+            gr.HTML('<div class="stage-heading"><span class="num">3</span><span>Output/Predictions</span></div>')
+            gr.HTML('<div class="output-allowed">Possible outputs: 0–9 and A–Z</div>')
+            prediction_output=gr.HTML(empty_prediction_html())
 
-    with gr.Accordion("Discussion prompts", open=False):
-        gr.Markdown(
-            """
-            - What was the model's actual input: the original canvas or the processed 28 × 28 image?
-            - Did the highest model score always correspond to your intended character?
-            - Which characters were easily confused, and why might their shapes overlap?
-            - What changed when you altered colour, thickness, size, position, case, or preprocessing?
-            - What happened when the input was not one single digit or letter?
-            - In your discipline, who decides an AI system's inputs, available outputs, and acceptable errors?
-
-            **Important:** the percentages are softmax output scores. They show how the model
-            distributes preference among its 36 available classes; they are not guaranteed
-            real-world probabilities and cannot establish that an input belongs to the task.
-            """
-        )
-
-    previous_state = gr.State(None)
+    gr.HTML("""
+      <div class="app-footer">
+        <div>© 2026 Queensland University of Technology (QUT).</div>
+        <div>This AI demo was developed by Dr Dimity Miller and Dr Ethan Goan.
+        Thank you to the QUT eResearch team for deployment support.</div>
+      </div>
+    """)
 
     predict_button.click(
         fn=predict,
-        concurrency_limit=int(os.getenv("CHARACTER_CLASSIFICATION_CONCURRENCY", 1)),
-        inputs=[drawing, preprocessing_mode, intention, previous_state],
-        outputs=[
-            model_input,
-            input_note,
-            prediction_output,
-            full_prediction_output,
-            interpretation,
-            comparison,
-            previous_state,
-        ],
+        inputs=[canvas_data],
+        outputs=[processed_output,prediction_output],
+        js="(_current) => { window.setupAICanvas?.(); return window.getAICanvasData ? window.getAICanvasData() : ''; }",
     )
     clear_button.click(
         fn=reset_app,
         inputs=[],
-        outputs=[
-            drawing,
-            model_input,
-            input_note,
-            prediction_output,
-            full_prediction_output,
-            interpretation,
-            comparison,
-            previous_state,
-        ],
+        outputs=[processed_output,prediction_output],
+        js="() => { window.setupAICanvas?.(); window.clearAICanvas?.(); return []; }",
     )
-    challenge.change(fn=challenge_text, inputs=challenge, outputs=challenge_prompt)
 
-# return demo
+    demo.load(
+        fn=None,inputs=[],outputs=[],js=APP_JS,queue=False,show_progress="hidden"
+    )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host",default="127.0.0.1")
+    parser.add_argument("--port",type=int,default=7860)
     parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Use 0.0.0.0 to allow access from other devices on the same network.",
+        "--root-path",
+        default=os.getenv("GRADIO_ROOT_PATH") or None,
+        help="Reverse-proxy prefix, e.g. /ai-demo.",
     )
-    parser.add_argument("--port", type=int, default=7860)
-    parser.add_argument(
-        "--share",
-        action="store_true",
-        help="Ask Gradio to create a temporary public share link.",
-    )
+    parser.add_argument("--share",action="store_true")
     return parser.parse_args()
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=True,
-        css=APP_CSS)
-
-    build_demo().launch(
-        server_name=args.host,
-        server_port=args.port,
-        share=args.share,
-        css=APP_CSS,
-    )
+if __name__=="__main__":
+    args=parse_args()
+    kwargs={
+        "server_name":args.host,
+        "server_port":args.port,
+        "share":args.share,
+        "root_path":args.root_path,
+        "show_error":True,
+    }
+    if GRADIO_MAJOR>=6:
+        kwargs["css"]=APP_CSS
+        demo.launch(**kwargs)
