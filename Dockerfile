@@ -24,6 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py ./
 COPY apps/ ./apps
 COPY qut001/ ./qut001
+COPY data/ ./data
 
 # Run as an unprivileged user rather than root.
 RUN useradd --create-home --uid 1000 appuser \

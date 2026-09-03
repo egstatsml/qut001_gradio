@@ -13,6 +13,7 @@ services:
       - ./apps:/app/apps
       - ./main.py:/app/main.py
       - ./hub.py:/app/hub.py
+      - ./data:/app/data
     environment:
       SITE_TITLE: "Engineering Gradio Demos"
       LOG_LEVEL: "INFO"
