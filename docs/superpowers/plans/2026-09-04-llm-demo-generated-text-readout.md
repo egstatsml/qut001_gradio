@@ -449,7 +449,7 @@ Expected: prints `Task 2 callback wiring OK`, exits 0.
 grep -n "step_log\|build_step_log_df\|show_history\|hide_history\|history_show\|history_hide\|history_panel\|step-log-table" apps/llm_demo.py || true
 ```
 
-Expected: NO output (every reference gone — the only `history` word left may be none at all).
+Expected: only `#step-log-table` CSS rule matches (those rules still exist until Task 3 — step-log-table is deliberately in this pattern). No **Python** references to step-log/history may remain in the callback code.
 
 ```bash
 .venv/bin/python -m py_compile apps/llm_demo.py
@@ -522,18 +522,18 @@ Delete the following rules/scoped selectors from `CSS` (all found via the grep i
 4. The v5 block: the comment line `/* Generation history belongs underneath the whole prediction/choice activity. */` and the three rules `.history-control-row{...}`, `#history-show-btn{...}`, `#history-show-btn button{min-height:34px!important;padding:4px 12px!important}` (currently ~lines 516–525).
 5. In the v5 18px-floor list: the two entries `.history-heading span,` and `#history-show-btn button,` (currently ~lines 539–540) — remove the items, keep the list terminating `{font-size:18px!important}` block.
 6. The `.history-control-row{margin-top:1px!important}` line inside the v5 media query (currently ~line 552).
-7. In the v6 font list: the four entries `#history-show-btn button{font-size:18px!important}`, `.history-heading b{font-size:18px!important}`, `.history-heading span{font-size:18px!important}`, `#history-hide-btn button{font-size:18px!important}` (currently ~lines 638–641).
+7. In the v6 font list: the six entries `#history-show-btn button{font-size:18px!important}`, `.history-heading b{font-size:18px!important}`, `.history-heading span{font-size:18px!important}`, `#history-hide-btn button{font-size:18px!important}`, `#step-log-table th{font-size:18px!important}`, `#step-log-table td{font-size:18px!important}` (currently ~lines 638–644).
 8. The `.history-control-row{margin-top:1px!important}` line inside the v6 media query (currently ~line 704).
-9. In the v7 font list: the four entries `#history-show-btn button{font-size:18px!important}`, `.history-heading b{font-size:20px!important}`, `.history-heading span{font-size:18px!important}`, `#history-hide-btn button{font-size:18px!important}` (currently ~lines 779–782).
+9. In the v7 font list: the six entries `#history-show-btn button{font-size:18px!important}`, `.history-heading b{font-size:20px!important}`, `.history-heading span{font-size:18px!important}`, `#history-hide-btn button{font-size:18px!important}`, `#step-log-table th{font-size:18px!important}`, `#step-log-table td{font-size:18px!important}` (currently ~lines 779–784).
 10. The `.history-control-row{margin-top:1px!important}` line inside the v7 media query (currently ~line 847).
 
-Verify afterwards there are no remaining matches:
+Verify afterwards that the ONLY remaining match is the v8 section comment appended in Step 1 (which contains the word "history" by design — it documents what the section replaced):
 
 ```bash
 grep -n "history\|History\|step-log-table" apps/llm_demo.py || true
 ```
 
-Expected: NO output from `apps/llm_demo.py` (the plan file itself is not checked).
+Expected: exactly one match, the line `   v8: live generated-text readout (replaces generation history)`. No history/step-log CSS *rules* may remain; the comment is the only allowed match.
 
 - [ ] **Step 3: Verify + commit**
 
