@@ -15,7 +15,7 @@ services:
       - ./hub.py:/app/hub.py
       - ./data:/app/data
     environment:
-      SITE_TITLE: "Engineering Gradio Demos"
+      SITE_TITLE: "AI in the Real World"
       LOG_LEVEL: "INFO"
     command: >
       uvicorn main:app --host 0.0.0.0 --port 7860 --reload
