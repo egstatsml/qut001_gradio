@@ -373,6 +373,43 @@ def section_heading(number, title, subtitle):
     """
 
 
+def empty_generated_text_html():
+    return (
+        "<div class='generated-text-empty'>"
+        "Your generated text will appear here as you choose what comes next."
+        "</div>"
+    )
+
+
+def generated_text_heading():
+    return """
+    <div class="section-heading">
+      <div><h2>Your generated text</h2><p>Your starting prompt, then the text you built from the AI's predictions.</p></div>
+    </div>
+    """
+
+
+def build_generated_text_html(original_prompt, context):
+    """Render the student's starting prompt (italicised, muted) followed by
+    the text they built by choosing the AI's predictions. Whitespace is
+    preserved via CSS pre-wrap so model-produced spaces/newlines display
+    naturally; the generated part is intentionally NOT stripped (the first
+    generated token usually carries the separating space)."""
+    if not original_prompt or not context:
+        return empty_generated_text_html()
+
+    prompt_html = html.escape(original_prompt)
+    generated = context[len(original_prompt):]  # safe: prefix invariant, see Global Constraints
+    generated_html = html.escape(generated)
+
+    return (
+        f"<div class='generated-text-body'>"
+        f"<span class='generated-prompt'>{prompt_html}</span>"
+        f"<span class='generated-delta'>{generated_html}</span>"
+        f"</div>"
+    )
+
+
 def advanced_help_html():
     return """
     <div class="advanced-help-content">
