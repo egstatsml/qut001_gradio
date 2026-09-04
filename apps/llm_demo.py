@@ -244,7 +244,7 @@ def on_choose(selection, original_prompt, context, choice_number, top_k, tokens)
             "<div class='done-message'>Maximum of 100 choices reached.</div>",
             gr.update(value=f"Done after {MAX_GENERATION_CHOICES} choices", visible=True),
             gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True),
-            gr.update(value=new_context, interactive=True), gr.update(interactive=True),
+            gr.update(value=original_prompt, interactive=True), gr.update(interactive=True),
             original_prompt, new_context, choice_number, top_k, [],
             gr.update(value=build_generated_text_html(original_prompt, new_context)),
         )
@@ -259,17 +259,17 @@ def on_choose(selection, original_prompt, context, choice_number, top_k, tokens)
         "",
         gr.update(value=f"Choice {next_choice} of {MAX_GENERATION_CHOICES}", visible=True),
         gr.update(interactive=False), gr.update(interactive=True), gr.update(interactive=True),
-        gr.update(value=new_context, interactive=False), gr.update(interactive=False),
+        gr.update(value=original_prompt, interactive=False), gr.update(interactive=False),
         original_prompt, new_context, next_choice, top_k, new_tokens,
         gr.update(value=build_generated_text_html(original_prompt, new_context)),
     )
 
 
-def on_stop(context):
+def on_stop(original_prompt):
     return (
         empty_token_choices_html("Stopped. Predict again when you are ready."),
         gr.update(interactive=True), gr.update(interactive=False), gr.update(interactive=True),
-        gr.update(value=context, interactive=True), gr.update(interactive=True),
+        gr.update(value=original_prompt, interactive=True), gr.update(interactive=True),
         gr.update(value="Stopped. Edit the input text or press Predict what comes next to continue.", visible=True),
     )
 
@@ -286,9 +286,8 @@ def on_reset():
         empty_generated_text_html(),
     )
 
-def show_advanced_help(prompt, context):
+def show_advanced_help(prompt):
     """Open advanced settings and pause/unlock any active generation."""
-    active_text = context if context else (prompt or "")
     return (
         gr.update(visible=True),
         empty_token_choices_html(
@@ -297,7 +296,7 @@ def show_advanced_help(prompt, context):
         gr.update(interactive=True),
         gr.update(interactive=False),
         gr.update(interactive=True),
-        gr.update(value=active_text, interactive=True),
+        gr.update(value=prompt, interactive=True),
         gr.update(interactive=True),
         gr.update(value="Paused — change the setting, then predict again.", visible=True),
     )
@@ -866,7 +865,7 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
         gr.HTML(section_heading(
             "1",
             "Generative AI input text",
-            "Start with some text. Every choice you make is added here and becomes the AI's new input.",
+            "Start with some text. The AI's input keeps growing as you choose — watch the text build in the Generated text section below.",
         ))
         prompt_input = gr.Textbox(
             label=f"Input text (up to {MAX_INITIAL_WORDS:,} starting words)",
@@ -983,7 +982,7 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
 
     advanced_info_btn.click(
         fn=show_advanced_help,
-        inputs=[prompt_input, context_state],
+        inputs=[prompt_input],
         outputs=[
             advanced_help_modal,
             token_choice_html,
@@ -1035,7 +1034,7 @@ with gr.Blocks(title="QUT001 · Understanding how Generative AI creates text") a
 
     stop_btn.click(
         fn=on_stop,
-        inputs=[context_state],
+        inputs=[original_prompt_state],
         outputs=[
             token_choice_html,
             start_btn, stop_btn, reset_btn,
