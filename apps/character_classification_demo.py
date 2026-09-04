@@ -146,7 +146,7 @@ footer {display:none!important;}
   text-shadow:0 1px 0 rgba(255,255,255,.9);
 }
 
-.pipeline-row {align-items:stretch!important}
+.pipeline-row {align-items:stretch!important; gap:8px!important}
 
 .stage-card {
   position:relative;
@@ -193,7 +193,7 @@ footer {display:none!important;}
   display:flex!important;
   align-items:center!important;
   justify-content:center!important;
-  min-width:52px!important;
+  min-width:30px!important;
 }
 .arrow-wrap {
   width:100%;
@@ -203,13 +203,13 @@ footer {display:none!important;}
   justify-content:center;
 }
 .arrow {
-  width:52px;height:52px;
+  width:26px;height:38px;
   border-radius:50%;
   display:grid;
   place-items:center;
   background:#0e1726;
   color:#fff;
-  font-size:27px;
+  font-size:19px;
   font-weight:900;
   box-shadow:0 10px 24px rgba(14,23,38,.20);
 }
@@ -1032,15 +1032,9 @@ with gr.Blocks(**BLOCKS_KWARGS) as demo:
                 with gr.Column(scale=3, min_width=220, elem_classes="input-preview-col"):
                     processed_output=gr.HTML(blank_processed_html())
 
-        with gr.Column(scale=1,min_width=52,elem_classes="arrow-column"):
-            gr.HTML('<div class="arrow-wrap"><div class="arrow">→</div></div>')
-
         with gr.Column(scale=3,min_width=190,elem_classes=["stage-card","model-stage"]):
             gr.HTML('<div class="stage-heading"><span class="num">2</span><span>AI Model</span></div>')
             gr.HTML(model_icon_html())
-
-        with gr.Column(scale=1,min_width=52,elem_classes="arrow-column"):
-            gr.HTML('<div class="arrow-wrap"><div class="arrow">→</div></div>')
 
         with gr.Column(scale=4,min_width=290,elem_classes="stage-card"):
             gr.HTML('<div class="stage-heading"><span class="num">3</span><span>Output/Predictions</span></div>')
