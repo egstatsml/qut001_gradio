@@ -404,6 +404,16 @@ def footer_html():
 
 
 CSS = r"""
+.dark {
+    --body-background-fill: white !important;
+    --body-text-color: black !important;
+    --block-background-fill: white !important;
+}
+
+.dark body {
+    background: white !important;
+    color: black !important;
+}
 :root{
   --qut-blue:#006DAE;--qut-deep:#043B68;--qut-navy:#062D4E;--qut-orange:#F4A024;
   --ink:#18324A;--muted:#5E7185;--line:#D9E4EE;--soft:#F3F7FA;

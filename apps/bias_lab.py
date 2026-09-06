@@ -2506,6 +2506,16 @@ def start_company(state):
 # ============================================================
 
 CSS = r"""
+.dark {
+    --body-background-fill: white !important;
+    --body-text-color: black !important;
+    --block-background-fill: white !important;
+}
+
+.dark body {
+    background: white !important;
+    color: black !important;
+}
 :root {
   --ink:#17223b; --muted:#667085; --line:#dce4f0; --panel:#ffffff;
   --blue:#2d7de9; --navy:#163a70; --purple:#6d5dfc; --teal:#16a394;

@@ -37,7 +37,18 @@ BACKGROUND_TEXTURE_PATH = Path(os.path.join(IMAGE_DIR, "background_texture.png")
 BACKGROUND_TEXTURE_B64 = base64.b64encode(BACKGROUND_TEXTURE_PATH.read_bytes()).decode("ascii")
 
 APP_CSS = r"""
+.dark {
+    --body-background-fill: white !important;
+    --body-text-color: black !important;
+    --block-background-fill: white !important;
+}
+
+.dark body {
+    background: white !important;
+    color: black !important;
+}
 :root {
+  color-scheme: light !important;
   --qut-blue:#00467f;
   --qut-blue-2:#0a5c9e;
   --ink:#0e1726;

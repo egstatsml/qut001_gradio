@@ -191,6 +191,8 @@ def _render_index() -> str:
       .broken summary {{ cursor: pointer; font-weight: 700; }}
       pre {{ overflow-x: auto; font-size: .8rem; }}
       @media (max-width: 600px) {{ .llm-hero {{ grid-template-columns: 1fr 64px; }} }}
+      .dark {{--body-background-fill: white !important; --body-text-color: black !important; --block-background-fill: white !important;}}
+      .dark body {{ background: white !important; color: black !important;}}
     </style>
   </head>
   <body>
